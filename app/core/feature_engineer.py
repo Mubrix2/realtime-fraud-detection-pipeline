@@ -26,8 +26,6 @@ FEATURE_COLUMNS = [
     "is_cashout",
     "balance_diff_orig",
     "balance_diff_dest",
-    "error_balance_orig",
-    "error_balance_dest",
     "amount_ratio_orig",
     "dest_balance_zero_before",
     "dest_balance_zero_after",
@@ -81,8 +79,6 @@ def engineer_features(transaction: dict) -> dict:
     # The error is the discrepancy between expected and actual balance change.
     # A legitimate transaction has error ≈ 0.
     # Fraudulent transactions often have large errors — a major red flag.
-    error_balance_orig = balance_diff_orig - amount
-    error_balance_dest = balance_diff_dest - amount
 
     # ── Amount ratio ──────────────────────────────────────────────────────────
     # What proportion of the sender's total balance was transacted?
@@ -112,8 +108,6 @@ def engineer_features(transaction: dict) -> dict:
         "is_cashout": is_cashout,
         "balance_diff_orig": balance_diff_orig,
         "balance_diff_dest": balance_diff_dest,
-        "error_balance_orig": error_balance_orig,
-        "error_balance_dest": error_balance_dest,
         "amount_ratio_orig": amount_ratio_orig,
         "dest_balance_zero_before": dest_balance_zero_before,
         "dest_balance_zero_after": dest_balance_zero_after,
@@ -134,8 +128,6 @@ def engineer_features_batch(df: pd.DataFrame) -> pd.DataFrame:
     result["is_cashout"] = (result["type"] == "CASH_OUT").astype(int)
     result["balance_diff_orig"] = result["oldbalanceOrg"] - result["newbalanceOrig"]
     result["balance_diff_dest"] = result["newbalanceDest"] - result["oldbalanceDest"]
-    result["error_balance_orig"] = result["balance_diff_orig"] - result["amount"]
-    result["error_balance_dest"] = result["balance_diff_dest"] - result["amount"]
     result["amount_ratio_orig"] = result["amount"] / (result["oldbalanceOrg"] + 1)
     result["dest_balance_zero_before"] = (result["oldbalanceDest"] == 0).astype(int)
     result["dest_balance_zero_after"] = (result["newbalanceDest"] == 0).astype(int)
