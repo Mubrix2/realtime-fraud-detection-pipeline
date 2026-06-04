@@ -18,6 +18,7 @@ import numpy as np
 
 from app.config import FRAUD_MODEL_PATH, FRAUD_THRESHOLD
 from app.core.feature_engineer import FEATURE_COLUMNS
+from app.core.explainer import initialise_explainer
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,13 @@ def load_model():
             _metadata = json.load(f)
         _threshold = _metadata.get("threshold", FRAUD_THRESHOLD)
 
+    # Initialise the SHAP explainer with the loaded model
+    initialise_explainer(_model)
+
     logger.info(
         f"Fraud model loaded. Threshold: {_threshold}. "
         f"Best iteration: {getattr(_model, 'best_iteration', 'N/A')}"
+        f"SHAP explainer ready."
     )
     return True
 
