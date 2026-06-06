@@ -198,7 +198,10 @@ def assess_transaction(
             # XGBoost results
             "fraud_probability": fraud_result["fraud_probability"],
             "is_fraud": fraud_result["is_fraud"],
+            "action": fraud_result.get("action", "APPROVE"),
             "risk_level": fraud_result["risk_level"],
+            "customer_message": fraud_result.get("customer_message", ""),
+            "analyst_action": fraud_result.get("analyst_action", ""),
             # Isolation Forest results
             "anomaly_score": anomaly_result["anomaly_score"],
             "is_anomalous": anomaly_result["is_anomalous"],

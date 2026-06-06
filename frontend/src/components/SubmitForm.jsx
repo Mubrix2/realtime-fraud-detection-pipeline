@@ -146,7 +146,7 @@ export default function SubmitForm({ onSubmitted }) {
             className="w-full border border-gray-200 rounded px-2 py-1.5
                        text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
           >
-            {['TRANSFER', 'CASH_OUT', 'CASH_IN', 'PAYMENT', 'DEBIT'].map(t => (
+            {['TRANSFER', 'PAYMENT',].map(t => (
               <option key={t} value={t}>{t}</option>
             ))}
           </select>

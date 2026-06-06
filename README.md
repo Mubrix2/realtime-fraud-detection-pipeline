@@ -32,41 +32,43 @@ A transaction is submitted to the API. Within milliseconds:
 │                        CLIENT                                    │
 │              React Dashboard / API Client                        │
 └───────────────────────────┬─────────────────────────────────────┘
-                            │ POST /api/v1/transactions/submit
-                            ▼
+│ POST /api/v1/transactions/submit
+▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      FastAPI Service                             │
+│              FastAPI Service  (Microservice 1)                   │
 │  • Pydantic v2 validation (extra=forbid security)               │
 │  • Publishes to Kafka raw-transactions topic                     │
+│  • Serves REST endpoints for results and dashboard               │
 │  • Returns HTTP 202 Accepted immediately                         │
 └───────────────────────────┬─────────────────────────────────────┘
-                            │ produce()
-                            ▼
+│ produce()
+▼
 ┌─────────────────────────────────────────────────────────────────┐
 │               Apache Kafka (KRaft mode)                          │
 │  Topic: raw-transactions (3 partitions)                          │
 │  Topic: fraud-results    (3 partitions)                          │
 └───────────────────────────┬─────────────────────────────────────┘
-                            │ consume()
-                            ▼
+│ consume()
+▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   Fraud Consumer Thread                          │
+│         Fraud Consumer Service  (Microservice 2)                 │
 │                                                                  │
-│  Feature Engineering (16 features from transaction fields)       │
+│  Feature Engineering (14 fraud-signal features)                  │
 │         │                                                        │
-│         ├── XGBoost Classifier ──────► fraud probability 0–1    │
-│         │   (trained on PaySim, SMOTE balanced)                  │
-│         │                                                        │
-│         ├── Isolation Forest ─────────► anomaly score           │
-│         │   (trained on legitimate transactions only)            │
-│         │                                                        │
-│         └── SHAP TreeExplainer ────────► top 5 reasons          │
-│             (compliance-ready explanation)                        │
+│         ├── XGBoost Classifier ──► fraud probability 0–1        │
+│         ├── Isolation Forest ─────► anomaly score               │
+│         └── SHAP TreeExplainer ───► top 5 compliance reasons    │
 │                                                                  │
-│  → Publishes to fraud-results topic                              │
-│  → Stores in results store for REST API                          │
+│  → Publishes scored results to fraud-results topic              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+Two independent microservices communicate only through Kafka topics.
+The API never calls the consumer directly.
+The consumer never calls the API directly.
+If either crashes, the other continues running.
 
 ---
 
@@ -183,35 +185,37 @@ ai-fraud-detection-pipeline/
 │   ├── api/routes/
 │   │   ├── transactions.py  # submit, results, recent, stats endpoints
 │   │   └── health.py
-│   ├── api/schemas.py       # Pydantic v2 models with extra=forbid
+│   ├── api/schemas.py
 │   ├── core/
-│   │   ├── feature_engineer.py  # 16 fraud-signal features
-│   │   ├── fraud_scorer.py      # XGBoost inference singleton
-│   │   ├── anomaly_detector.py  # Isolation Forest inference
-│   │   └── explainer.py         # SHAP TreeExplainer
-│   ├── models/              # Trained .pkl files (gitignored)
+│   │   ├── feature_engineer.py   # 14 fraud-signal features
+│   │   ├── fraud_scorer.py       # XGBoost inference singleton
+│   │   ├── anomaly_detector.py   # Isolation Forest inference
+│   │   └── explainer.py          # SHAP TreeExplainer
+│   ├── models/               # Trained .pkl files (gitignored)
 │   ├── services/
-│   │   └── detection_service.py # Pipeline orchestration
+│   │   └── detection_service.py  # Pipeline orchestration
 │   ├── streaming/
-│   │   ├── producer.py      # Kafka producer with delivery callback
-│   │   └── consumer.py      # Consumer thread with thread-safe store
-│   └── main.py
-├── data/                    # Raw and processed data (gitignored)
-├── notebooks/               # Exploratory analysis
+│   │   ├── producer.py       # Kafka producer with delivery callback
+│   │   └── consumer.py       # Consumer logic and results store
+│   ├── main.py               # FastAPI entry point (Microservice 1)
+│   └── consumer_main.py      # Consumer entry point (Microservice 2)
+├── data/                     # Raw and processed data (gitignored)
+├── notebooks/                # Exploratory analysis
 ├── scripts/
-│   ├── prepare_data.py      # SMOTE, scaling, train/test split
-│   ├── train_fraud_model.py # XGBoost training + threshold search
+│   ├── prepare_data.py
+│   ├── train_fraud_model.py
 │   ├── train_anomaly_model.py
-│   └── evaluate_models.py   # Combined model comparison
-├── tests/                   # 30+ unit tests
-├── frontend/                # React + Vite dashboard
-├── Dockerfile
-├── Dockerfile.frontend
-├── docker-compose.yml
+│   └── evaluate_models.py
+├── tests/
+├── frontend/                 # React + Vite dashboard
+├── Dockerfile                # FastAPI image
+├── Dockerfile.consumer       # Consumer image
+├── Dockerfile.frontend       # React image
+├── docker-compose.yml        # All four services
 └── nginx.conf
 ```
 
----
+
 
 ## Running Locally
 
@@ -228,15 +232,14 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Download PaySim to data/raw/paysim.csv from:
-# https://www.kaggle.com/datasets/ntnu-testimon/paysim1
-
 python scripts/prepare_data.py
 python scripts/train_fraud_model.py
 python scripts/train_anomaly_model.py
 ```
 
 ### 2 — With Docker Compose (recommended)
+
+Starts all four services — Kafka, API, Consumer, Dashboard:
 
 ```bash
 docker compose build
@@ -246,23 +249,45 @@ docker compose up
 - API: http://localhost:8000/docs
 - Dashboard: http://localhost:80
 
-### 3 — Without Docker
+### 3 — Without Docker (four separate terminals)
 
-**Terminal 1 — Kafka:**
+**Terminal 1 — Kafka broker:**
 ```bash
 kafka-server-start.sh ~/kafka/config/kraft/server.properties
 ```
 
-**Terminal 2 — FastAPI:**
+**Terminal 2 — FastAPI (Microservice 1):**
 ```bash
 source venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-**Terminal 3 — React:**
+**Terminal 3 — Fraud Consumer (Microservice 2):**
+```bash
+source venv/bin/activate
+python app/consumer_main.py
+```
+
+**Terminal 4 — React dashboard:**
 ```bash
 cd frontend && npm install && npm run dev
 ```
+
+Visit http://localhost:5173
+````
+
+Key engineering decisions (add one new entry)**
+
+````markdown
+**Why two separate microservices instead of one?**
+The API handles HTTP — it needs to respond in milliseconds and scale
+with web traffic. The consumer handles ML inference — it needs to
+process messages reliably and scale with Kafka partition count.
+They have different resource profiles, different failure modes, and
+different scaling requirements. Separating them means a model loading
+error does not take down the API, and an HTTP spike does not starve
+the consumer of CPU. Each service does one thing and does it well.
+````
 
 ---
 

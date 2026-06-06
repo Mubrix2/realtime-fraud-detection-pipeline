@@ -1,7 +1,5 @@
-# docker-compose.yml
 services:
 
-  # ── Kafka ──────────────────────────────────────────────────────────────────
   kafka:
     image: apache/kafka:3.8.1
     container_name: fraud_kafka
@@ -36,11 +34,6 @@ services:
     restart: unless-stopped
 
 
-  # ── FastAPI — HTTP API and Kafka Producer ───────────────────────────────────
-  # Responsibilities:
-  # - Validate incoming transactions (Pydantic)
-  # - Publish to raw-transactions topic (Kafka producer)
-  # - Serve REST endpoints for results and dashboard
   api:
     build:
       context: .
@@ -71,16 +64,6 @@ services:
     restart: unless-stopped
 
 
-  # ── Consumer — Kafka Consumer and ML Scoring ────────────────────────────────
-  # Responsibilities:
-  # - Read transactions from raw-transactions topic
-  # - Run XGBoost + Isolation Forest scoring
-  # - Generate SHAP explanations
-  # - Publish results to fraud-results topic
-  #
-  # Completely independent from the API service.
-  # Can be scaled horizontally: add more consumer replicas
-  # to process higher transaction volume.
   consumer:
     build:
       context: .
@@ -100,11 +83,8 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
-    # No ports exposed — consumer has no HTTP server
-    # It only communicates via Kafka
 
 
-  # ── React Dashboard ─────────────────────────────────────────────────────────
   frontend:
     build:
       context: .
