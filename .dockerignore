@@ -1,0 +1,32 @@
+# Python
+venv-linux/
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Data — too large and not needed in Docker
+data/raw/
+data/processed/
+
+# Notebooks and scripts — not needed in production image
+notebooks/
+scripts/
+
+# Git
+.git/
+*.md
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Kafka local data
+kafka-data/
+kafka-logs/
+
+# Test artifacts
+.coverage
+htmlcov/
