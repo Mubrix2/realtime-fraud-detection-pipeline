@@ -68,6 +68,63 @@ def load_model():
     return True
 
 
+def _get_tiered_action(probability: float) -> dict:
+    """
+    Tiered threshold system.
+
+    Instead of a single binary cut-off, we define four zones
+    that trigger different customer-facing actions.
+
+    Thresholds are configurable via environment variables —
+    different businesses have different risk tolerances.
+    A lending company may set CHALLENGE lower than a payment processor.
+
+    APPROVE   — low risk, no friction
+    FLAG      — moderate risk, approve but alert analyst
+    CHALLENGE — high risk, require step-up authentication (OTP/biometric)
+    BLOCK     — critical risk, decline and require manual review
+    """
+    if probability >= 0.80:
+        return {
+            "action": "BLOCK",
+            "risk_level": "CRITICAL",
+            "is_fraud": True,
+            "customer_message": (
+                "This transaction has been declined for security reasons. "
+                "Please contact your bank."
+            ),
+            "analyst_action": "Manual review required immediately",
+        }
+    elif probability >= 0.60:
+        return {
+            "action": "CHALLENGE",
+            "risk_level": "HIGH",
+            "is_fraud": False,
+            "customer_message": (
+                "Please verify this transaction with the OTP "
+                "sent to your registered phone number."
+            ),
+            "analyst_action": "Flag for review if challenge fails",
+        }
+    elif probability >= 0.30:
+        return {
+            "action": "FLAG",
+            "risk_level": "MEDIUM",
+            "is_fraud": False,
+            "customer_message": "Transaction approved.",
+            "analyst_action": "Review within 24 hours",
+        }
+    else:
+        return {
+            "action": "APPROVE",
+            "risk_level": "LOW",
+            "is_fraud": False,
+            "customer_message": "Transaction approved.",
+            "analyst_action": "No action required",
+        }
+
+
+
 def score_transaction(features: dict) -> dict:
     """
     Score a single transaction for fraud probability.
@@ -105,25 +162,22 @@ def score_transaction(features: dict) -> dict:
     # predict_proba returns [[prob_legitimate, prob_fraud]]
     # We want the fraud probability — index 1
     fraud_probability = float(_model.predict_proba(feature_values)[0][1])
-    is_fraud = fraud_probability >= _threshold
+    
 
     # Risk levels give analysts a human-readable triage label
     # These thresholds are business decisions — adjust based on
     # how conservative your client wants to be
-    if fraud_probability >= 0.9:
-        risk_level = "CRITICAL"
-    elif fraud_probability >= 0.7:
-        risk_level = "HIGH"
-    elif fraud_probability >= 0.4:
-        risk_level = "MEDIUM"
-    else:
-        risk_level = "LOW"
+    tiered = _get_tiered_action(fraud_probability)
+
 
     return {
         "fraud_probability": round(fraud_probability, 6),
-        "is_fraud": is_fraud,
-        "risk_level": risk_level,
-        "threshold_used": _threshold,
+        "action": tiered["action"],
+        "is_fraud": tiered["is_fraud"],
+        "risk_level": tiered["risk_level"],
+        "customer_message": tiered["customer_message"],
+        "analyst_action": tiered["analyst_action"],
+        "threshold_used": "tiered",
         "model_available": True,
     }
 

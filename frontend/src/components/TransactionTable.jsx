@@ -90,12 +90,7 @@ export default function TransactionTable({ transactions, selected, onSelect }) {
                   <ActionBadge action={tx.action} />
                 </td>
                 <td className="px-4 py-3 text-center">
-                  {isAutoApproved
-                    ? <span className="text-xs text-gray-400 italic">
-                        out of scope
-                      </span>
-                    : <RiskBadge level={tx.risk_level} />
-                  }
+                  <ActionBadge action={tx.action} />
                 </td>
                 <td className="px-4 py-3 text-right">
                   {isAutoApproved
