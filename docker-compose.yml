@@ -1,0 +1,125 @@
+# docker-compose.yml
+services:
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: fraud_kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: >
+        /opt/kafka/bin/kafka-topics.sh
+        --list
+        --bootstrap-server localhost:9092
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+
+  # ── FastAPI — HTTP API and Kafka Producer ───────────────────────────────────
+  # Responsibilities:
+  # - Validate incoming transactions (Pydantic)
+  # - Publish to raw-transactions topic (Kafka producer)
+  # - Serve REST endpoints for results and dashboard
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TRANSACTIONS_TOPIC: raw-transactions
+      KAFKA_RESULTS_TOPIC: fraud-results
+      KAFKA_CONSUMER_GROUP: fraud-detection-group
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: >
+        python -c
+        "import urllib.request;
+        urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+
+  # ── Consumer — Kafka Consumer and ML Scoring ────────────────────────────────
+  # Responsibilities:
+  # - Read transactions from raw-transactions topic
+  # - Run XGBoost + Isolation Forest scoring
+  # - Generate SHAP explanations
+  # - Publish results to fraud-results topic
+  #
+  # Completely independent from the API service.
+  # Can be scaled horizontally: add more consumer replicas
+  # to process higher transaction volume.
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: fraud_consumer
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TRANSACTIONS_TOPIC: raw-transactions
+      KAFKA_RESULTS_TOPIC: fraud-results
+      KAFKA_CONSUMER_GROUP: fraud-detection-group
+    depends_on:
+      kafka:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    # No ports exposed — consumer has no HTTP server
+    # It only communicates via Kafka
+
+
+  # ── React Dashboard ─────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: fraud_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+volumes:
+  kafka_data:
+    driver: local

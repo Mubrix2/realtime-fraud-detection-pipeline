@@ -1,0 +1,38 @@
+# Dockerfile.consumer
+# Builds the standalone Kafka consumer microservice.
+# This runs completely separately from the FastAPI API service.
+# It reads transactions from Kafka, scores them, and publishes results.
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY app/ ./app/
+
+# Verify models exist — consumer cannot run without them
+RUN python -c "
+import sys
+from pathlib import Path
+for model in ['fraud_model.pkl', 'anomaly_model.pkl', 'scaler.pkl']:
+    path = Path(f'app/models/{model}')
+    if not path.exists():
+        print(f'ERROR: {path} not found. Run training scripts first.')
+        sys.exit(1)
+print('All models verified.')
+"
+
+# Consumer is a long-running process, not an HTTP server
+CMD ["python", "app/consumer_main.py"]
