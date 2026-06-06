@@ -17,6 +17,8 @@ Regulatory context:
 
 This module satisfies all three requirements.
 """
+import sys
+from pathlib import Path
 import logging
 from typing import Optional
 
@@ -26,6 +28,9 @@ import shap
 from app.core.feature_engineer import FEATURE_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+# Allow imports from project root
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Human-readable names for each model feature.
 # These appear in compliance reports and analyst dashboards.

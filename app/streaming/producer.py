@@ -21,6 +21,8 @@ Design decisions:
 Documentation:
 https://docs.confluent.io/kafka-clients/python/current/overview.html
 """
+import sys
+from pathlib import Path
 import json
 import logging
 from datetime import datetime, timezone
@@ -34,6 +36,9 @@ from app.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Allow imports from project root
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 _producer: Optional[Producer] = None
 _delivery_count = {"success": 0, "failure": 0}

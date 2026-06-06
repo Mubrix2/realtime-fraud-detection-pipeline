@@ -9,17 +9,22 @@ Complements the XGBoost fraud classifier:
 Both scores are returned to the detection service which
 combines them into a final verdict.
 """
+import sys
 import json
 import logging
 from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 
-from app.config import ANOMALY_MODEL_PATH, ANOMALY_THRESHOLD
-from app.core.feature_engineer import FEATURE_COLUMNS
+from config import ANOMALY_MODEL_PATH, ANOMALY_THRESHOLD
+from core.feature_engineer import FEATURE_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+# Allow imports from project root
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 _model = None
 _scaler = None
@@ -42,6 +47,13 @@ def load_model():
         return False
 
     _model = joblib.load(ANOMALY_MODEL_PATH)
+
+   # FIX: Optimize Isolation Forest evaluation latency.
+    # Forces scikit-learn to utilize all available CPU cores (-1) 
+    # to evaluate the 200 trees concurrently instead of sequentially.
+    if hasattr(_model, 'n_jobs'):
+        _model.n_jobs = -1
+
 
     # Load the same scaler used during training
     scaler_path = ANOMALY_MODEL_PATH.parent / "scaler.pkl"
@@ -80,7 +92,6 @@ def score_transaction(features: dict) -> dict:
         - model_available: bool
     """
     if _model is None:
-        logger.warning("Anomaly model not loaded — returning safe default")
         return {
             "anomaly_score": 0.0,
             "is_anomalous": False,
@@ -88,20 +99,22 @@ def score_transaction(features: dict) -> dict:
             "model_available": False,
         }
 
-    feature_array = np.array(
-        [[features.get(col, 0.0) for col in FEATURE_COLUMNS]]
+    import pandas as pd
+
+    # Pass DataFrame with column names — matches what scaler was fitted on
+    feature_df = pd.DataFrame(
+        [[features.get(col, 0.0) for col in FEATURE_COLUMNS]],
+        columns=FEATURE_COLUMNS,
     )
 
-    # Scale features using the same scaler from training
     if _scaler is not None:
-        feature_array = _scaler.transform(feature_array)
+        feature_array = _scaler.transform(feature_df)
+    else:
+        feature_array = feature_df.values
 
-    # score_samples returns negative values
-    # More negative = more isolated = more anomalous
     anomaly_score = float(_model.score_samples(feature_array)[0])
     is_anomalous = anomaly_score < _threshold
 
-    # Severity levels based on how far below threshold the score is
     if anomaly_score < _threshold - 0.1:
         severity = "ANOMALOUS"
     elif anomaly_score < _threshold:

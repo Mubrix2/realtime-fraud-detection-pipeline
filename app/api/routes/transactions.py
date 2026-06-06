@@ -50,7 +50,7 @@ async def submit_transaction(request: TransactionRequest):
     The distinction matters: fraud scoring has not happened yet
     when this endpoint responds. Using 202 communicates this correctly.
     """
-    transaction_data = request.model_dump()
+    transaction_data = request.model_dump(mode="json")
 
     # Publish to Kafka
     result = publish_transaction(transaction_data)
@@ -106,62 +106,89 @@ async def get_results(transaction_id: str):
 
 def _score_and_store(transaction_id: str, transaction_data: dict) -> None:
     """
-    Score a transaction synchronously and store results.
+    Score a transaction and store the result in the API results store.
 
-    This function exists for the demo — in production, scoring
-    happens in the Kafka consumer (Phase 7) after the message
-    is consumed from the raw-transactions topic.
+    Delegates entirely to assess_transaction() in detection_service.py
+    which handles in order:
+    1. Transaction type guard (PAYMENT → auto-approve, no ML)
+    2. Feature engineering
+    3. XGBoost fraud scoring with tiered action system
+    4. Isolation Forest anomaly detection
+    5. SHAP explainability
+    6. Circuit breaker fallback if ML fails
+    7. Audit logging
 
-    In the full architecture:
-    1. /submit publishes to Kafka and returns 202
-    2. Kafka consumer picks up the message
-    3. Consumer scores and publishes to fraud-results topic
-    4. Results consumer stores in Redis/PostgreSQL
-    5. /results/{id} reads from Redis/PostgreSQL
     """
-    import time
-    start = time.time()
+    from app.services.detection_service import assess_transaction
 
-    try:
-        # Convert transaction to internal format for feature engineering
-        internal = {
-            "step": transaction_data.get("step", 1),
-            "type": transaction_data.get("type", "TRANSFER"),
-            "amount": transaction_data.get("amount", 0.0),
-            "oldbalanceOrg": transaction_data.get("oldbalance_org", 0.0),
-            "newbalanceOrig": transaction_data.get("newbalance_orig", 0.0),
-            "oldbalanceDest": transaction_data.get("oldbalance_dest", 0.0),
-            "newbalanceDest": transaction_data.get("newbalance_dest", 0.0),
-        }
+    assessment = assess_transaction(
+        transaction_id=transaction_id,
+        transaction_data=transaction_data,
+    )
+    _results_store[transaction_id] = assessment
 
-        features = engineer_features(internal)
-        fraud_result = fraud_score(features)
-        anomaly_result = anomaly_score(features)
-        explanation = explain_transaction(features, top_n=5)
-        explanation_text = format_explanation_text(explanation)
 
-        elapsed_ms = (time.time() - start) * 1000
+@router.get(
+    "/recent",
+    summary="Get recent transaction assessments for dashboard",
+)
+async def get_recent_transactions(limit: int = 100):
+    """
+    Returns results from the API's own scoring store.
+    Populated by synchronous scoring when transactions are submitted.
+    """
+    sorted_results = sorted(
+        _results_store.values(),
+        key=lambda x: x.get("scored_at", ""),
+        reverse=True,
+    )
+    return {
+        "transactions": sorted_results[:limit],
+        "total": len(_results_store),
+    }
 
-        _results_store[transaction_id] = {
-            "transaction_id": transaction_id,
-            "fraud_probability": fraud_result["fraud_probability"],
-            "is_fraud": fraud_result["is_fraud"],
-            "risk_level": fraud_result["risk_level"],
-            "is_anomalous": anomaly_result["is_anomalous"],
-            "anomaly_severity": anomaly_result["anomaly_severity"],
-            "top_reasons": explanation["top_reasons"],
-            "explanation_text": explanation_text,
-            "scored_at": datetime.now(timezone.utc),
-            "processing_time_ms": round(elapsed_ms, 2),
-        }
 
-        logger.info(
-            f"Scored {transaction_id}: "
-            f"fraud={fraud_result['fraud_probability']:.3f} "
-            f"({fraud_result['risk_level']}) | "
-            f"anomaly={anomaly_result['anomaly_severity']} | "
-            f"{elapsed_ms:.1f}ms"
+@router.get(
+    "/stats",
+    summary="Get fraud detection system statistics",
+)
+async def get_system_stats():
+    """
+    Derives stats directly from the API's results store.
+    Always accurate — no dependency on consumer process memory.
+    """
+    total = len(_results_store)
+    flagged = sum(
+        1 for r in _results_store.values() if r.get("is_flagged")
+    )
+    blocked = sum(
+        1 for r in _results_store.values() if r.get("action") == "BLOCK"
+    )
+    challenged = sum(
+        1 for r in _results_store.values() if r.get("action") == "CHALLENGE"
+    )
+    critical = sum(
+        1 for r in _results_store.values() if r.get("risk_level") == "CRITICAL"
+    )
+
+    return {
+        "total_processed": total,
+        "total_flagged": flagged,
+        "fraud_rate": round(flagged / total, 4) if total > 0 else 0.0,
+        "blocked": blocked,
+        "challenged": challenged,
+        "critical": critical,
+    }
+
+@router.get(
+    "/results/{transaction_id}",
+    response_model=FraudResultResponse,
+)
+async def get_results(transaction_id: str):
+    result = _results_store.get(transaction_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No result found for {transaction_id}",
         )
-
-    except Exception as e:
-        logger.error(f"Scoring failed for {transaction_id}: {e}")
+    return FraudResultResponse(**result)
