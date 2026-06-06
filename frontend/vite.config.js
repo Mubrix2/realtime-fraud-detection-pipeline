@@ -13,11 +13,11 @@ export default defineConfig({
     // Proxy API requests to FastAPI — avoids CORS issues in development
     proxy: {
       '/api': {
-        target: 'http://localhost:8001',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8001',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },
