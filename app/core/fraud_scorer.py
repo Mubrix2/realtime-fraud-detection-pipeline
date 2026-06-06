@@ -9,6 +9,8 @@ Design principle: this module knows nothing about Kafka or FastAPI.
 It takes a feature dict, returns a score dict.
 Fully testable without any infrastructure.
 """
+import sys
+from pathlib import Path
 import json
 import logging
 from pathlib import Path
@@ -21,6 +23,9 @@ from app.core.feature_engineer import FEATURE_COLUMNS
 from app.core.explainer import initialise_explainer
 
 logger = logging.getLogger(__name__)
+
+# Allow imports from project root
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Singleton — model loaded once, reused for every transaction
 _model = None
@@ -52,7 +57,7 @@ def load_model():
             _metadata = json.load(f)
         _threshold = _metadata.get("threshold", FRAUD_THRESHOLD)
 
-    # Initialise the SHAP explainer with the loaded model
+    from app.core.explainer import initialise_explainer
     initialise_explainer(_model)
 
     logger.info(
